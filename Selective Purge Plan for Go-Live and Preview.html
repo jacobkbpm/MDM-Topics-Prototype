@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Selective Purge Plan for Go-Live and Preview</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --card: #ffffff;
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+
+    /* Yes / No tags */
+    --yes-bg: #e6f6ec;  --yes-ink: #166534;  --yes-dot: #22c55e;
+    --no-bg:  #fde8ea;  --no-ink:  #9f1239;  --no-dot:  #f43f5e;
+
+    /* Toggle tags */
+    --a-bg: #f1e8fd; --a-ink: #5b21b6; --a-dot: #8b5cf6;   /* Toggle A - violet */
+    --b-bg: #e3eefd; --b-ink: #1e40af; --b-dot: #3b82f6;   /* Toggle B - blue */
+    --c-bg: #def5f5; --c-ink: #0f5f66; --c-dot: #14b8a6;   /* Toggle C - teal */
+
+    --amber-bg: #fff6df; --amber-ink: #7a5200; --amber-line: #f3dc9a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5; font-size: 15px;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 40px 24px 64px; }
+
+  header h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.3px; }
+  header p  { margin: 0; color: var(--muted); max-width: 720px; }
+
+  h2 { font-size: 18px; margin: 40px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 20px; box-shadow: 0 1px 2px rgba(16,24,40,.04);
+  }
+
+  /* ---------- Tags ---------- */
+  .tag {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 3px 11px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+  }
+  .yes { background: var(--yes-bg); color: var(--yes-ink); }
+  .no  { background: var(--no-bg);  color: var(--no-ink); }
+  .tA  { background: var(--a-bg); color: var(--a-ink); }
+  .tB  { background: var(--b-bg); color: var(--b-ink); }
+  .tC  { background: var(--c-bg); color: var(--c-ink); }
+
+  /* ---------- Quick numbers ---------- */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 28px; }
+  .stat .big { font-size: 30px; font-weight: 700; letter-spacing: -.5px; }
+  .stat .lbl { color: var(--muted); font-size: 13px; }
+  .stat .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+  /* ---------- Matrix ---------- */
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: 13px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #fafbff; }
+  td.feat { font-weight: 600; }
+  td.feat small { display: block; font-weight: 400; color: var(--muted); font-size: 12.5px; }
+  tr.group td {
+    background: #f3f4f8; font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); font-weight: 700; padding: 8px 14px;
+  }
+  .changed { display: inline-block; margin-left: 8px; font-size: 11px; font-weight: 700;
+             background: var(--amber-bg); color: var(--amber-ink); border: 1px solid var(--amber-line);
+             padding: 1px 8px; border-radius: 999px; vertical-align: middle; }
+
+  /* ---------- What changes ---------- */
+  .three { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .three h3 { margin: 0 0 4px; font-size: 15px; }
+  .three p  { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+  .three ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .three li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+  .bar { border-top: 4px solid; }
+  .bar.on   { border-color: var(--yes-dot); }
+  .bar.off  { border-color: var(--no-dot); }
+  .bar.same { border-color: #cbd5e1; }
+
+  .two { display: grid; grid-template-columns: 1fr 40px 1fr; gap: 10px; align-items: stretch; }
+  .two h3 { margin: 0 0 6px; font-size: 16px; }
+  .two p  { margin: 0 0 12px; font-size: 14px; }
+  .two .tag { margin: 0 6px 6px 0; }
+  .two .arrow { display: grid; place-items: center; font-size: 26px; color: var(--muted); }
+  @media (max-width: 640px) {
+    .two { grid-template-columns: 1fr; }
+    .two .arrow { transform: rotate(90deg); }
+  }
+
+  /* ---------- Toggle guide ---------- */
+  .toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
+  .toggle h3 { margin: 10px 0 6px; font-size: 15px; }
+  .toggle p  { margin: 0 0 10px; font-size: 14px; }
+  .toggle .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-top: 10px; }
+  .toggle .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .chip { background: #f3f4f6; border-radius: 6px; padding: 2px 8px; font-size: 12.5px; }
+  .tbd { background: var(--amber-bg); color: var(--amber-ink); border: 1px solid var(--amber-line); }
+  .internal { background: #eceef3; color: #374151; margin-right: 6px; }
+  .notes { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13.5px; }
+  .state { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .state span.lab { font-size: 12px; color: var(--muted); align-self: center; }
+
+  /* ---------- Steps ---------- */
+  .steps { display: grid; gap: 14px; }
+  .step { display: grid; grid-template-columns: 44px 1fr; gap: 16px; }
+  .num {
+    width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+    font-weight: 700; font-size: 17px;
+  }
+  .s1 .num { background: var(--b-bg); color: var(--b-ink); }
+  .s2 .num { background: var(--amber-bg); color: var(--amber-ink); }
+  .s3 .num { background: var(--yes-bg); color: var(--yes-ink); }
+  .s4 .num { background: var(--a-bg); color: var(--a-ink); }
+  .step h3 { margin: 0; font-size: 16px; }
+  .step .when { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .step ul { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+  .step li { font-size: 14px; }
+
+  /* ---------- Confirm box ---------- */
+  .confirm { background: var(--amber-bg); border: 1px solid var(--amber-line); color: var(--amber-ink); }
+  .confirm h3 { margin: 0 0 8px; font-size: 15px; }
+  .confirm ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+
+  footer { margin-top: 36px; color: var(--muted); font-size: 12.5px; text-align: center; }
+
+  @media (max-width: 640px) {
+    td.feat small { display: none; }
+    thead th, tbody td { padding: 10px 8px; }
+  }
+  @media print {
+    body { background: #fff; }
+    .card { box-shadow: none; break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Selective Purge Plan for Go-Live and Preview</h1>
+    <p>One page that shows which Purge features are available in <strong>Preview</strong>, which are available at <strong>GA</strong>, and which <strong>toggle</strong> controls each one.</p>
+  </header>
+
+  <!-- MATRIX -->
+  <h2>1. The full picture</h2>
+  <p class="sub">Read each row left to right: the feature, whether it is on in Preview, whether it is on at GA, and the toggle that controls it.</p>
+  <div class="card" style="padding:8px">
+    <table>
+      <thead>
+        <tr><th style="width:44%">Feature</th><th>Preview</th><th>GA</th><th>Toggle</th></tr>
+      </thead>
+      <tbody>
+        <tr class="group"><td colspan="4">Mark Records for Purge from</td></tr>
+        <tr>
+          <td class="feat">Ingress <span class="changed">changes at GA</span></td>
+          <td><span class="tag no">No</span></td><td><span class="tag yes">Yes</span></td><td><span class="tag tA">Toggle A</span></td>
+        </tr>
+        <tr>
+          <td class="feat">IFI</td>
+          <td><span class="tag yes">Yes</span></td><td><span class="tag yes">Yes</span></td><td><span class="tag tA">Toggle A</span></td>
+        </tr>
+        <tr>
+          <td class="feat">API</td>
+          <td><span class="tag yes">Yes</span></td><td><span class="tag yes">Yes</span></td><td><span class="tag tA">Toggle A</span></td>
+        </tr>
+        <tr>
+          <td class="feat">Business UI</td>
+          <td><span class="tag yes">Yes</span></td><td><span class="tag yes">Yes</span></td><td><span class="tag tA">Toggle A</span></td>
+        </tr>
+        <tr class="group"><td colspan="4">Other purge capabilities</td></tr>
+        <tr>
+          <td class="feat">See the records marked for purge in Search <span class="changed">changes at GA</span></td>
+          <td><span class="tag yes">Yes</span></td><td><span class="tag no">No</span></td><td><span class="tag tB">Toggle B</span></td>
+        </tr>
+        <tr>
+          <td class="feat">See the records marked for purge in Ops Insight <span class="changed">changes at GA</span></td>
+          <td><span class="tag no">No</span></td><td><span class="tag yes">Yes</span></td><td><span class="tag tA">Toggle A</span></td>
+        </tr>
+        <tr>
+          <td class="feat">Mark Master records for purge</td>
+          <td><span class="tag no">No</span></td><td><span class="tag no">No</span></td><td><span class="tag tC">Toggle C</span></td>
+        </tr>
+        <tr>
+          <td class="feat">Mark Source records for purge</td>
+          <td><span class="tag yes">Yes</span></td><td><span class="tag yes">Yes</span></td><td><span class="tag tA">Toggle A</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- WHAT CHANGES -->
+  <h2>2. What changes between Preview and GA</h2>
+  <p class="sub">There is one change in behaviour. Nothing else is different.</p>
+  <div class="two">
+    <div class="card bar same">
+      <h3>In Preview</h3>
+      <p>Records marked for purge can be found by using <strong>Search</strong>.</p>
+      <span class="tag yes">Search: available</span>
+    </div>
+    <div class="arrow" aria-hidden="true">→</div>
+    <div class="card bar on">
+      <h3>At GA</h3>
+      <p>Search is <strong>not available</strong> for records marked for purge. These records are shown <strong>only in Ops Insight</strong>.</p>
+      <span class="tag no">Search: not available</span>
+      <span class="tag yes">Ops Insight: available</span>
+    </div>
+  </div>
+
+  <!-- TOGGLES -->
+  <h2>3. The three toggles</h2>
+  <p class="sub">Think of each toggle as one switch that controls a group of features.</p>
+  <div class="toggles">
+    <div class="card toggle">
+      <span class="tag tA">Toggle A</span>
+      <h3>Main purge switch</h3>
+      <p>Controls marking records for purge from each entry point, marking Source records, and seeing marked records in Ops Insight.</p>
+      <div class="k">Controls 6 features</div>
+      <div class="chips">
+        <span class="chip">Ingress</span><span class="chip">IFI</span><span class="chip">API</span>
+        <span class="chip">Business UI</span><span class="chip">Ops Insight</span><span class="chip">Source records</span>
+      </div>
+      <div class="state"><span class="lab">Preview</span><span class="tag yes">Partly on</span><span class="lab">GA</span><span class="tag yes">Fully on</span></div>
+    </div>
+
+    <div class="card toggle">
+      <span class="tag tB">Toggle B</span>
+      <h3>Search visibility switch</h3>
+      <p>Controls whether records marked for purge can be seen in Search. It is on during Preview. What happens to it at GA will be discussed and decided separately.</p>
+      <div class="k">Controls 1 feature</div>
+      <div class="chips"><span class="chip">Marked records in Search</span></div>
+      <div class="state"><span class="lab">Preview</span><span class="tag yes">On</span><span class="lab">GA</span><span class="tag tbd">To be discussed</span></div>
+    </div>
+
+    <div class="card toggle">
+      <span class="tag tC">Toggle C</span>
+      <h3>Master records and reinstate switch</h3>
+      <p>Controls two things: the ability to mark Master records for purge, and the ability to reinstate records. While it is off, Master records cannot be marked, and neither Source nor Master records can be reinstated. It stays off in both Preview and GA.</p>
+      <div class="k">Controls 2 abilities</div>
+      <div class="chips"><span class="chip">Mark Master records for purge</span><span class="chip">Reinstate records (Source and Master)</span></div>
+      <div class="k">Good to know</div>
+      <ul class="notes">
+        <li><span class="tag internal">Internal only</span> This toggle will <strong>not be communicated to GCS</strong>.</li>
+        <li>It is used by our own teams only and is not part of the customer or GCS messaging.</li>
+        <li>Keep it off in Preview and at GA. Do not enable it for any customer.</li>
+      </ul>
+      <div class="state"><span class="lab">Preview</span><span class="tag no">Off</span><span class="lab">GA</span><span class="tag no">Off</span></div>
+    </div>
+  </div>
+
+  <!-- GO LIVE STEPS -->
+  <h2>4. Go-live steps</h2>
+  <p class="sub">Four simple stages. Do them in order.</p>
+  <div class="steps">
+    <div class="card step s1">
+      <div class="num">1</div>
+      <div>
+        <h3>Preview</h3>
+        <div class="when">Now</div>
+        <ul>
+          <li>Turn <span class="tag tA">Toggle A</span> on for IFI, API, Business UI and Source records.</li>
+          <li>Turn <span class="tag tB">Toggle B</span> on so marked records can be seen in Search.</li>
+          <li>Keep Ingress and Ops Insight hidden. Keep <span class="tag tC">Toggle C</span> off.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card step s2">
+      <div class="num">2</div>
+      <div>
+        <h3>Get ready for GA</h3>
+        <div class="when">Before the GA date</div>
+        <ul>
+          <li>Collect Preview feedback and fix any open issues.</li>
+          <li>Prepare the customer message about the change in behaviour (see step 3).</li>
+          <li>Check in a test org that marked records show in Ops Insight and not in Search.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card step s3">
+      <div class="num">3</div>
+      <div>
+        <h3>Go live (GA)</h3>
+        <div class="when">GA day</div>
+        <ul>
+          <li>Enable <span class="tag tA">Toggle A</span> for <strong>all customers</strong>.</li>
+          <li>Search no longer shows records marked for purge.</li>
+          <li>Leave <span class="tag tC">Toggle C</span> off.</li>
+          <li><strong>Tell customers about the change:</strong> once records are marked for purge, they can see the details in <strong>Ops Insight</strong> and not under <strong>Search</strong>.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card step s4">
+      <div class="num">4</div>
+      <div>
+        <h3>After GA</h3>
+        <div class="when">First days after go-live</div>
+        <ul>
+          <li>Check that marking records works from Ingress, IFI, API and Business UI.</li>
+          <li>Check that marked records appear in Ops Insight.</li>
+          <li>Watch for errors and customer questions about where to find marked records.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <footer>Selective Purge · Preview and GA rollout plan</footer>
+</div>
+</body>
+</html>
